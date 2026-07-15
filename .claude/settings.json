@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check server.js)",
+      "Bash(cp js/main.js __TRACKED_VAR__/main.mjs)",
+      "Bash(cp js/pad-page.js __TRACKED_VAR__/padpage.mjs)",
+      "Bash(node --check __TRACKED_VAR__/padpage.mjs)",
+      "PowerShell($c = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c | Select-Object -First 1 | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; \"PORT 8000 in use by PID $\\($_.OwningProcess\\): $\\($p.ProcessName\\)\" } } else { \"PORT 8000 is FREE\" })",
+      "Bash(node server.js)"
+    ]
+  }
+}

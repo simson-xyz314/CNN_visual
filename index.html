@@ -18,14 +18,9 @@
 <body>
   <canvas id="scene"></canvas>
 
-  <!-- Drawing pad -->
-  <div id="pad-panel" class="glass">
-    <div class="pad-label">여기에 <b>1~9</b> 숫자를 써보세요</div>
-    <canvas id="pad" width="280" height="280"></canvas>
-    <div class="pad-buttons">
-      <button id="clear-btn">지우기</button>
-      <button id="run-btn" class="primary">실행 ▶</button>
-    </div>
+  <!-- Idle screen (shown until a pad sends a digit) -->
+  <div id="wait-card">
+    <div id="wait-conn">태블릿에 숫자를 그려서 시작하기</div>
   </div>
 
   <!-- Progress rail (non-interactive, shows flow position) -->

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#05060d" />
+  <title>CNN 시각화 · 그리기 패드</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="pad-body">
+  <div id="pad-page">
+    <div id="conn-status" class="disconnected">연결 중…</div>
+    <div class="pad-page-label">여기에 <b>1~9</b> 숫자를 쓰고 <b>전송</b>하세요</div>
+    <canvas id="pad" width="360" height="360"></canvas>
+    <div class="pad-page-buttons">
+      <button id="clear-btn">지우기</button>
+      <button id="run-btn" class="primary">전송 ▶</button>
+    </div>
+    <div id="pad-toast"></div>
+  </div>
+  <script type="module" src="js/pad-page.js"></script>
+</body>
+</html>

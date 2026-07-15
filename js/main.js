@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { loadWeights, forward, getKernel } from "./cnn.js";
-import { initPad } from "./pad.js";
 import {
   tween, clearTweens, updateTweens, setGroupOpacity,
   makeTexture, easeInOut, easeOut, easeOutBack,
@@ -78,6 +77,88 @@ function shootBeam(from, to) {
     },
     onDone: () => { beam.visible = false; },
   });
+}
+
+// ---------------- Floating station labels (small 3D captions parked above each layer) ----------------
+function makeLabelTexture(text) {
+  const dpr = 2, fs = 46;
+  const c = document.createElement("canvas");
+  const ctx = c.getContext("2d");
+  ctx.font = `700 ${fs}px 'Malgun Gothic', sans-serif`;
+  const tw = ctx.measureText(text).width;
+  c.width = (tw + 70) * dpr; c.height = (fs + 44) * dpr;
+  ctx.scale(dpr, dpr);
+  const w = c.width / dpr, h = c.height / dpr;
+  ctx.font = `700 ${fs}px 'Malgun Gothic', sans-serif`;
+  ctx.fillStyle = "rgba(10,16,34,0.72)";
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(3, 3, w - 6, h - 6, 18); ctx.fill(); }
+  else ctx.fillRect(3, 3, w - 6, h - 6);
+  ctx.strokeStyle = "rgba(120,160,255,0.35)"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = "#eaf2ff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(56,232,255,0.5)"; ctx.shadowBlur = 12;
+  ctx.fillText(text, w / 2, h / 2 + 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  return { tex, aspect: w / h };
+}
+
+function makeLabelSprite(text) {
+  const { tex, aspect } = makeLabelTexture(text);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
+  sp.renderOrder = 999; sp.userData.aspect = aspect;
+  return sp;
+}
+
+// Station signs parked above the layers of the fast middle section. They stay
+// hidden until the train reaches that section, then appear in advance so you can
+// read them while whizzing past.
+let stationLabels = {};
+function buildStationLabels() {
+  for (const k in stationLabels) scene.remove(stationLabels[k]);
+  stationLabels = {};
+  const defs = {
+    conv1: { x: POS.conv1.x, y: 6.8, z: POS.conv1.z, t: "피처맵 · ReLU" },
+    pool1: { x: POS.pool1.x, y: 6.8, z: POS.pool1.z, t: "풀링" },
+    conv2: { x: POS.conv2.x, y: 5.6, z: POS.conv2.z, t: "합성곱 반복" },
+    pool2: { x: POS.pool2.x, y: 5.6, z: POS.pool2.z, t: "깊은 특징" },
+    flatten: { x: POS.flatten.x, y: 5.0, z: POS.flatten.z, t: "Flatten" },
+    fc: { x: POS.fc.x + 5, y: 7.6, z: POS.fc.z, t: "완전연결 · Softmax · 예측" },
+  };
+  for (const k in defs) {
+    const d = defs[k];
+    const sp = makeLabelSprite(d.t);
+    sp.position.set(d.x, d.y, d.z);
+    scene.add(sp);
+    stationLabels[k] = sp;
+  }
+}
+function showStation(...keys) {
+  for (const k of keys) {
+    const sp = stationLabels[k];
+    if (!sp) continue;
+    const s0 = sp.material.opacity;
+    tween({ dur: 0.5, onUpdate: (e) => (sp.material.opacity = s0 + (1 - s0) * e) });
+  }
+}
+
+// A single per-step caption used for the early distinct steps (1~4), which all
+// happen at the input location. Fades out once the station signs take over.
+const captionSprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
+captionSprite.renderOrder = 999; captionSprite.visible = false; captionSprite.userData.aspect = 4;
+scene.add(captionSprite);
+function setCaption(text, pos) {
+  const { tex, aspect } = makeLabelTexture(text);
+  if (captionSprite.material.map) captionSprite.material.map.dispose();
+  captionSprite.material.map = tex; captionSprite.material.needsUpdate = true;
+  captionSprite.userData.aspect = aspect;
+  captionSprite.position.set(pos[0], pos[1], pos[2]);
+  captionSprite.visible = true;
+  const s0 = captionSprite.material.opacity;
+  tween({ dur: 0.5, onUpdate: (e) => (captionSprite.material.opacity = s0 + (1 - s0) * e) });
+}
+function hideCaption() {
+  const s0 = captionSprite.material.opacity;
+  tween({ dur: 0.4, onUpdate: (e) => (captionSprite.material.opacity = s0 * (1 - e)), onDone: () => (captionSprite.visible = false) });
 }
 
 // ---------------- Build the whole network ----------------
@@ -180,63 +261,74 @@ const STEP_META = [
 // the camera pans sideways; earlier layers sit to the left and never occlude.
 const cx = { input: POS.input.x, conv1: POS.conv1.x, pool1: POS.pool1.x, conv2: POS.conv2.x, pool2: POS.pool2.x, flatten: POS.flatten.x, fc: POS.fc.x };
 const cz = { input: POS.input.z, conv1: POS.conv1.z, pool1: POS.pool1.z, conv2: POS.conv2.z, pool2: POS.pool2.z, flatten: POS.flatten.z, fc: POS.fc.z };
+// Oblique "train window" view: the camera sits behind-left of each layer and
+// looks forward-right, so it glides past the layers at an angle (지하철 차창).
 const WP = [
-  { p: [cx.input - 3, 5, 17], t: [cx.input, 0.6, 0] },                 // 1 input
-  { p: [cx.input, 2.5, 15], t: [cx.input, 0, 0] },                     // 2 rgb
-  { p: [cx.input - 2, 4, 12], t: [cx.input, 1, 0.5] },                 // 3 kernel
-  { p: [cx.input + 8, 5, 23], t: [cx.input + 8, 0, -2] },             // 4 scan
-  { p: [cx.conv1, 2, cz.conv1 + 19], t: [cx.conv1, 0, cz.conv1] },     // 5 maps
-  { p: [cx.conv1, 2, cz.conv1 + 17], t: [cx.conv1, 0, cz.conv1] },     // 6 relu
-  { p: [cx.pool1, 2, cz.pool1 + 19], t: [cx.pool1, 0, cz.pool1] },     // 7 pool1
-  { p: [cx.conv2, 2.5, cz.conv2 + 30], t: [cx.conv2, 0, cz.conv2] },   // 8 conv2
-  { p: [cx.pool2, 2.5, cz.pool2 + 30], t: [cx.pool2, 0, cz.pool2] },   // 9 pool2
-  { p: [cx.flatten, 2, cz.flatten + 23], t: [cx.flatten, 0, cz.flatten] }, // 10 flatten
-  { p: [cx.fc + 3, 2.5, cz.fc + 30], t: [cx.fc + 5, 0, cz.fc] },       // 11 fc
-  { p: [cx.fc + 8, 2, cz.fc + 18], t: [cx.fc + 10, 0, cz.fc] },        // 12 softmax
-  { p: [cx.fc + 9, 1.5, cz.fc + 15], t: [cx.fc + 10, 0, cz.fc] },      // 13 output
+  { p: [cx.input - 6, 5, 17], t: [cx.input + 3, 0.6, 0] },                       // 1 input
+  { p: [cx.input - 11, 4, 13], t: [cx.input, 0, 0] },                            // 2 rgb (angled to see the 3 channels)
+  { p: [cx.input - 6, 4.5, 12], t: [cx.input + 2, 1, 0.5] },                     // 3 kernel
+  { p: [cx.input + 2, 5, 22], t: [cx.input + 10, 0, -2] },                       // 4 scan
+  { p: [cx.conv1 - 9, 4, cz.conv1 + 15], t: [cx.conv1 + 4, 0, cz.conv1] },       // 5 maps
+  { p: [cx.conv1 - 6, 4, cz.conv1 + 13], t: [cx.conv1 + 6, 0, cz.conv1] },       // 6 relu
+  { p: [cx.pool1 - 9, 4, cz.pool1 + 15], t: [cx.pool1 + 4, 0, cz.pool1] },       // 7 pool1
+  { p: [cx.conv2 - 12, 4.5, cz.conv2 + 22], t: [cx.conv2 + 5, 0, cz.conv2] },    // 8 conv2
+  { p: [cx.pool2 - 12, 4.5, cz.pool2 + 22], t: [cx.pool2 + 5, 0, cz.pool2] },    // 9 pool2
+  { p: [cx.flatten - 9, 4, cz.flatten + 17], t: [cx.flatten + 4, 0, cz.flatten] }, // 10 flatten
+  { p: [cx.fc - 7, 4.5, cz.fc + 24], t: [cx.fc + 6, 0, cz.fc] },                 // 11 fc
+  { p: [cx.fc + 2, 3, cz.fc + 16], t: [cx.fc + 10, 0, cz.fc] },                  // 12 softmax
+  { p: [cx.fc + 4, 2.5, cz.fc + 14], t: [cx.fc + 10, 0, cz.fc] },                // 13 output
 ];
 const WPp = WP.map((w) => new THREE.Vector3(...w.p));
 const WPt = WP.map((w) => new THREE.Vector3(...w.t));
 const _tgt = new THREE.Vector3();
 
-// Each step = HOLD (camera parked at the layer while its reveal animation plays
-// to completion) + TRAVEL (glide to the next layer). This guarantees an
-// animation finishes before the next one starts.
-const HOLD = [2.2, 3.8, 1.8, 6.2, 2.4, 2.2, 2.2, 2.4, 2.2, 2.6, 2.8, 2.2, 4.2];
-const TRAVEL = 1.7;
+// Each step = HOLD (camera dwells at the layer while its reveal plays) + TRAVEL
+// (glide to the next). Visually-similar middle stages (ReLU, pooling, repeated
+// conv) get short HOLD/TRAVEL so the train zips through them; distinctive stages
+// (input, scan, first maps, flatten, FC, output) linger.
+// Steps 1-5 and 10-13 keep the original pace; only the visually-similar middle
+// (6 ReLU, 7 pool, 8 conv, 9 pool) whizzes by fast.
+//              1    2    3    4    5    6    7    8    9   10   11   12   13
+const HOLD =   [2.2, 3.8, 1.8, 6.2, 2.4, 0.9, 1.0, 1.2, 0.9, 2.6, 2.8, 2.2, 4.2];
+const TRAVEL = [1.7, 1.7, 1.7, 1.7, 1.2, 0.8, 0.9, 0.8, 1.6, 1.7, 1.7, 1.7, 0.0];
 const N = 13;
 const stepStart = [0];
-for (let i = 1; i < N; i++) stepStart[i] = stepStart[i - 1] + HOLD[i - 1] + TRAVEL;
+for (let i = 1; i < N; i++) stepStart[i] = stepStart[i - 1] + HOLD[i - 1] + TRAVEL[i - 1];
 const totalTime = stepStart[N - 1] + HOLD[N - 1];
 
 // ---------------- Reveal behaviours per step ----------------
 function reveal(step) {
   switch (step) {
     case 1:
+      setCaption("1. 입력 이미지 (28×28)", [POS.input.x, 9.5, 0]);
       fadeTo(B.groups.input, 1, 0.5);
       tween({ dur: 1.2, ease: easeOutBack, onUpdate: (e) => (B.input.mesh.scale.z = Math.max(0.001, e)) });
       break;
     case 2:
+      setCaption("2. RGB 채널 분리", [POS.input.x, 9.5, 0]);
       fadeTo(B.groups.input, 0.06, 0.6); // background grid nearly transparent while RGB planes show
       fadeTo(B.groups.rgb, 0.9, 0.5);
       B.rgb.planes.forEach((pl) => (pl.material.opacity = 0));
       tween({ dur: 0.5, onUpdate: (e) => B.rgb.planes.forEach((pl) => (pl.material.opacity = e * 0.9)) });
+      // pull the three channels apart into clearly spaced layers, then HOLD (no merge)
       tween({
-        dur: 3.0, delay: 0.3, ease: (x) => x,
+        dur: 1.3, delay: 0.3, ease: easeOut,
         onUpdate: (e) => {
-          const off = Math.sin(e * Math.PI) * 3.6;
-          B.rgb.planes[0].position.set(-off, 0, Math.sin(e * Math.PI) * 0.6);
-          B.rgb.planes[2].position.set(off, 0, -Math.sin(e * Math.PI) * 0.6);
+          B.rgb.planes[0].position.set(-1.3 * e, 0.9 * e, 3.2 * e);   // R — front
+          B.rgb.planes[1].position.set(0, 0, 0);                      // G — middle
+          B.rgb.planes[2].position.set(1.3 * e, -0.9 * e, -3.2 * e);  // B — back
         },
       });
       break;
     case 3:
+      setCaption("3. 3×3 커널", [POS.input.x, 9.5, 0]);
       fadeTo(B.groups.input, 1, 0.6); // restore the input grid for the scan
       fadeTo(B.groups.rgb, 0, 0.6);
       B.kernel.cubes.forEach((c, i) => tween({ dur: 0.5, delay: i * 0.03, ease: easeOutBack, onUpdate: (e) => (c.material.opacity = e) }));
       B.groups.kernel.position.set(POS.input.x - 6.75, 6.75, POS.input.z + 3.4);
       break;
     case 4:
+      setCaption("4. 특징 추출 (합성곱)", [POS.input.x + 8, 9.5, -1]);
       B.scanMat.opacity = 1;
       startScan();
       break;
@@ -244,8 +336,10 @@ function reveal(step) {
       fadeTo(B.groups.kernel, 0, 0.6);
       B.kernel.hlMat.opacity = 0;
       tween({ dur: 0.6, onUpdate: (e) => (B.scanMat.opacity = 1 - e), onDone: () => (B.scanMat.opacity = 0) });
+      hideCaption(); // station signs take over from here
       shootBeam(POS.input, POS.conv1);
       revealLayer(B.conv1raw, { pop: true });
+      showStation("conv1", "pool1", "conv2", "pool2"); // whiz-section signs appear in advance
       break;
     case 6:
       // in-place value change: raw -> ReLU (local crossfade, camera stays put)
@@ -254,7 +348,7 @@ function reveal(step) {
       break;
     case 7: shootBeam(POS.conv1, POS.pool1); revealLayer(B.pool1, { pop: true }); break;
     case 8: shootBeam(POS.pool1, POS.conv2); revealLayer(B.conv2, { step: 0.04 }); break;
-    case 9: shootBeam(POS.conv2, POS.pool2); revealLayer(B.pool2, { pop: true }); break;
+    case 9: shootBeam(POS.conv2, POS.pool2); revealLayer(B.pool2, { pop: true }); showStation("flatten", "fc"); break;
     case 10:
       shootBeam(POS.pool2, POS.flatten);
       B.flatten.mesh.material.opacity = 0;
@@ -338,6 +432,10 @@ function showResult() {
   document.getElementById("result-conf").textContent = `확신도 ${(probs[pred] * 100).toFixed(1)}%`;
   document.getElementById("result-card").classList.remove("hidden");
 
+  // ~10s after the result appears, clear the scene back to the idle screen
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(resetView, 10000);
+
   const toast = document.getElementById("toast");
   toast.innerHTML = `당신이 쓴 숫자는 <b>${pred}</b> 입니다`;
   toast.classList.add("show");
@@ -363,49 +461,63 @@ function showResult() {
 }
 
 // ---------------- Flow controller ----------------
-let flowActive = false, flowTime = 0, lastStep = -1, flowFrozen = false;
+let flowActive = false, flowTime = 0, lastStep = -1, flowFrozen = false, idleTimer = null;
 
 function startFlow() {
   clearTweens();
+  clearTimeout(idleTimer);
   flowActive = true; flowTime = 0; lastStep = 0;
   controls.enabled = false;
+  captionSprite.visible = false; captionSprite.material.opacity = 0;
+  buildStationLabels();
   document.getElementById("progress").classList.remove("hidden");
   document.getElementById("result-card").classList.add("hidden");
 }
 
-// ---------------- UI wiring ----------------
-let pad = null;
-
+// ---------------- Display: receive digits from the pad over WebSocket ----------------
 async function boot() {
   await loadWeights("model_weights.json");
-  pad = initPad();
   document.getElementById("loading").classList.add("done");
-  document.getElementById("clear-btn").onclick = () => pad.clear();
-  document.getElementById("run-btn").onclick = runInference;
+  connectWS();
   window.__viz = {
     ready: true, runInput, totalTime, stepStart, HOLD,
+    freeze: (v) => { flowFrozen = v; },
     jump: (step) => { flowTime = Math.min(totalTime, stepStart[step - 1] + HOLD[step - 1] * 0.85); },
     jumpFrac: (step, frac) => { flowTime = stepStart[step - 1] + HOLD[step - 1] * frac; },
   };
 }
 
-function runInference() {
-  if (!pad.hasInk()) { flashPad(); return; }
-  const input = pad.extract();
-  if (!input) { flashPad(); return; }
-  runInput(input);
+function connectWS() {
+  const conn = document.getElementById("wait-conn");
+  const ws = new WebSocket(`ws://${location.host}`);
+  ws.onopen = () => { ws.send(JSON.stringify({ type: "hello", role: "display" })); conn.textContent = "태블릿에 숫자를 그려서 시작하기"; conn.className = "connected"; };
+  ws.onclose = () => { conn.textContent = "태블릿에 숫자를 그려서 시작하기"; conn.className = "disconnected"; setTimeout(connectWS, 1500); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === "run" && Array.isArray(msg.input)) runInput(new Float32Array(msg.input));
+    else if (msg.type === "clear") resetView();
+  };
 }
 
 function runInput(input) {
   const result = forward(input);
   buildAll(result);
-  document.getElementById("pad-panel").classList.add("dim");
+  document.getElementById("wait-card").classList.add("hidden");
   startFlow();
 }
 
-function flashPad() {
-  const p = document.getElementById("pad");
-  p.animate([{ boxShadow: "0 0 0 2px #ff5577" }, { boxShadow: "inset 0 0 40px rgba(0,0,0,.6)" }], { duration: 600 });
+function resetView() {
+  clearTimeout(idleTimer);
+  flowActive = false;
+  controls.enabled = false;
+  captionSprite.visible = false; captionSprite.material.opacity = 0;
+  for (const k in stationLabels) scene.remove(stationLabels[k]);
+  stationLabels = {};
+  document.getElementById("progress").classList.add("hidden");
+  document.getElementById("result-card").classList.add("hidden");
+  document.getElementById("wait-card").classList.remove("hidden");
+  disposeBuilt();
 }
 
 // ---------------- Render loop ----------------
@@ -427,7 +539,7 @@ function animate(t) {
     while (lastStep < s + 1) { lastStep++; reveal(lastStep); }
     // HOLD: park exactly at this layer; TRAVEL: glide to the next waypoint
     const next = Math.min(N - 1, s + 1);
-    const fr = (local < HOLD[s] || s >= N - 1) ? 0 : easeInOut(Math.min(1, (local - HOLD[s]) / TRAVEL));
+    const fr = (local < HOLD[s] || s >= N - 1) ? 0 : easeInOut(Math.min(1, (local - HOLD[s]) / TRAVEL[s]));
     camera.position.lerpVectors(WPp[s], WPp[next], fr);
     _tgt.lerpVectors(WPt[s], WPt[next], fr);
     controls.target.copy(_tgt);
@@ -439,6 +551,13 @@ function animate(t) {
   }
 
   if (B) B.fc.outputs.forEach((o) => (o.mesh.material.emissiveIntensity = 0.15 + o.prob * (1.2 + Math.sin(now * 2 + o.digit) * 0.25)));
+  const scaleLabel = (sp) => {
+    const d = camera.position.distanceTo(sp.position);
+    const h = Math.max(0.5, d * 0.045); // keep captions roughly constant on-screen size
+    sp.scale.set(h * sp.userData.aspect, h, 1);
+  };
+  for (const k in stationLabels) scaleLabel(stationLabels[k]);
+  if (captionSprite.visible) scaleLabel(captionSprite);
   renderer.render(scene, camera);
 }
 
