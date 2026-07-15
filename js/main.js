@@ -217,6 +217,7 @@ function reveal(step) {
       tween({ dur: 1.2, ease: easeOutBack, onUpdate: (e) => (B.input.mesh.scale.z = Math.max(0.001, e)) });
       break;
     case 2:
+      fadeTo(B.groups.input, 0.06, 0.6); // background grid nearly transparent while RGB planes show
       fadeTo(B.groups.rgb, 0.9, 0.5);
       B.rgb.planes.forEach((pl) => (pl.material.opacity = 0));
       tween({ dur: 0.5, onUpdate: (e) => B.rgb.planes.forEach((pl) => (pl.material.opacity = e * 0.9)) });
@@ -230,6 +231,7 @@ function reveal(step) {
       });
       break;
     case 3:
+      fadeTo(B.groups.input, 1, 0.6); // restore the input grid for the scan
       fadeTo(B.groups.rgb, 0, 0.6);
       B.kernel.cubes.forEach((c, i) => tween({ dur: 0.5, delay: i * 0.03, ease: easeOutBack, onUpdate: (e) => (c.material.opacity = e) }));
       B.groups.kernel.position.set(POS.input.x - 6.75, 6.75, POS.input.z + 3.4);
