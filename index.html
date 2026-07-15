@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CNN 3D 시각화 · 손글씨 숫자 인식</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="lib/d3.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./lib/three.module.js",
+      "three/addons/controls/OrbitControls.js": "./lib/OrbitControls.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <!-- Drawing pad -->
+  <div id="pad-panel" class="glass">
+    <div class="pad-label">여기에 <b>1~9</b> 숫자를 써보세요</div>
+    <canvas id="pad" width="280" height="280"></canvas>
+    <div class="pad-buttons">
+      <button id="clear-btn">지우기</button>
+      <button id="run-btn" class="primary">실행 ▶</button>
+    </div>
+  </div>
+
+  <!-- Progress rail (non-interactive, shows flow position) -->
+  <div id="progress" class="hidden"><div id="progress-fill"></div></div>
+
+  <!-- Final prediction overlay -->
+  <div id="result-card" class="glass hidden">
+    <div class="result-big">
+      <div class="result-label">예측 결과</div>
+      <div id="result-digit">–</div>
+      <div id="result-conf"></div>
+    </div>
+    <svg id="prob-chart" width="360" height="300"></svg>
+  </div>
+
+  <div id="toast"></div>
+
+  <div id="loading">모델 불러오는 중…</div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
